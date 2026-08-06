@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Paisa Quest</title>
+
+<!-- Makes "Add to Home Screen" on iPhone behave like a real app (full screen, own icon, no Safari address bar) -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Paisa Quest" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#14162B" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<!-- Tailwind utility classes, no build step needed -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: #0B0C1A;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  #app-shell {
+    min-height: 100dvh;
+    max-width: 480px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: #14162B;
+  }
+  @keyframes paisaPop {
+    from { transform: translateX(-50%) translateY(-8px) scale(0.9); opacity: 0; }
+    to   { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+  }
+  .pq-scroll::-webkit-scrollbar { width: 4px; }
+  .pq-scroll::-webkit-scrollbar-thumb { background: #2A2E56; border-radius: 4px; }
+  input::placeholder { color: #6B6F99; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React 18 (pinned — React 19+ dropped the browser-ready UMD build this no-build setup relies on) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- In-browser JSX compiler, so no npm/build step is needed -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+/* ---------------------------------------------------------
+   PAISA QUEST — standalone build (no Claude runtime needed)
+   Zero npm deps at runtime: React+ReactDOM+Babel+Tailwind via
+   CDN only. Charts and icons are hand-rolled (no recharts,
+   no lucide-react) so nothing needs a bundler. Data persists
+   via plain localStorage.
+--------------------------------------------------------- */
+
+const CATEGORIES = [
+  { id: "food", label: "Food", emoji: "🍕", color: "#FF6B6B" },
+  { id: "games", label: "Games", emoji: "🎮", color: "#9B7EDE" },
+  { id: "books", label: "Books", emoji: "📚", color: "#2EC4B6" },
+  { id: "shopping", label: "Shopping", emoji: "👕", color: "#F2B705" },
+  { id: "gifts", label: "Gifts", emoji: "🎁", color: "#FF8FA3" },
+  { id: "transport", label: "Transport", emoji: "🚲", color: "#5DA9E9" },
+];
+
+const DEFAULT_CHALLENGES = [
+  { id: "c7", title: "7-Day Streak", desc: "Save ₹50/day for 7 days", saveTarget: 350, progress: 0, reward: "Bronze Badge", claimed: false },
+  { id: "c30", title: "30-Day No-Impulse", desc: "No unnecessary purchases for 30 days", saveTarget: 1, progress: 0, reward: "Rare Achievement", claimed: false },
+  { id: "c100", title: "100-Day Vault", desc: "Save ₹5,000 in 100 days", saveTarget: 5000, progress: 0, reward: "Premium Theme", claimed: false },
+];
+
+const INSTRUMENTS = [
+  { symbol: "TATASTL", name: "Tata Steel", type: "Stock", price: 165, vol: 0.03 },
+  { symbol: "NIFTYBEES", name: "Nifty 50 ETF", type: "ETF", price: 245, vol: 0.015 },
+  { symbol: "GOLDBEES", name: "Gold ETF", type: "Gold", price: 62, vol: 0.01 },
+  { symbol: "SBIMF", name: "SBI Flexicap Fund", type: "Mutual Fund", price: 88, vol: 0.012 },
+  { symbol: "HDFCBANK", name: "HDFC Bank", type: "Stock", price: 1620, vol: 0.02 },
+];
+
+const LESSONS = [
+  { title: "Inflation", body: "₹100 today buys less next year. Prices creep up ~5-6% a year in India, so cash sitting idle quietly loses value." },
+  { title: "Budgeting", body: "The 50-30-20 rule: 50% needs, 30% wants, 20% savings. Even ₹2,000/month pocket money can follow this split." },
+  { title: "Credit Cards", body: "A credit card is a short-term loan, not free money. Pay the full bill every month or interest (often 30-40% p.a.) piles up fast." },
+  { title: "Taxes", body: "Tax is how governments fund roads, schools, and hospitals. Even small purchases include GST — it's already baked into the price tag." },
+  { title: "Mutual Funds", body: "A mutual fund pools money from many investors to buy a basket of stocks/bonds, run by a professional. Easier diversification than picking single stocks." },
+  { title: "SIPs", body: "A SIP (Systematic Investment Plan) invests a fixed amount every month automatically — small, regular amounts can grow a lot over years." },
+  { title: "Emergency Funds", body: "Keep 3-6 months of expenses in an easy-to-access account before investing elsewhere. It's your safety net, not a growth tool." },
+];
+
+const QUIZ = [
+  { q: "You save ₹100 every week. How much after 1 year (52 weeks)?", options: ["₹1,200", "₹5,200", "₹10,400", "₹52,000"], a: 1 },
+  { q: "What does an ETF mainly do?", options: ["Guarantees fixed interest", "Tracks a basket of assets like an index", "Is a type of loan", "Is issued only by banks"], a: 1 },
+  { q: "Which is the safest place for an emergency fund?", options: ["Stocks", "Crypto", "Easy-access savings", "Gold futures"], a: 2 },
+  { q: "A SIP works best because of...", options: ["Timing the market perfectly", "One large lump sum", "Regular small investing over time", "Avoiding all risk"], a: 2 },
+];
+
+const CURRENCY = (n) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+
+function loadKey(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveKey(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* private-browsing or quota error: fail silently, app still works in-session */
+  }
+}
+
+/* ---- hand-rolled donut chart (CSS conic-gradient, no chart lib) ---- */
+function Donut({ data, size = 96, hole = 0.62 }) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total <= 0) return null;
+  let cum = 0;
+  const stops = data
+    .map((d) => {
+      const start = (cum / total) * 360;
+      cum += d.value;
+      const end = (cum / total) * 360;
+      return `${d.color} ${start}deg ${end}deg`;
+    })
+    .join(", ");
+  const holeSize = size * hole;
+  const holeOffset = (size - holeSize) / 2;
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <div style={{ width: size, height: size, borderRadius: "9999px", background: `conic-gradient(${stops})` }} />
+      <div style={{ position: "absolute", top: holeOffset, left: holeOffset, width: holeSize, height: holeSize, borderRadius: "9999px", background: "#1E2142" }} />
+    </div>
+  );
+}
+
+/* ---- hand-rolled sparkline (inline SVG polyline, no chart lib) ---- */
+function Sparkline({ values, w = 100, h = 32, stroke = "#2EC4B6" }) {
+  if (!values || values.length < 2) return <div style={{ height: h }} />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - ((v - min) / range) * (h - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <polyline points={points} fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function XPRing({ xp, level, size = 52 }) {
+  const pct = (xp % 100) / 100;
+  const r = (size - 8) / 2;
+  const c = 2 * Math.PI * r;
+  return (
+    <div style={{ width: size, height: size }} className="relative shrink-0">
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="#2A2E56" strokeWidth="5" fill="none" />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} stroke="#F2B705" strokeWidth="5" fill="none"
+          strokeDasharray={c} strokeDashoffset={c * (1 - pct)} strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 0.6s ease" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span style={{ fontFamily: "Poppins", color: "#F5F3EE", fontWeight: 700, fontSize: 13 }}>{level}</span>
+      </div>
+    </div>
+  );
+}
+
+function Toast({ text, onDone }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 1800);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div
+      className="fixed left-1/2 z-50 px-4 py-2 rounded-full shadow-lg flex items-center gap-2"
+      style={{ background: "#F2B705", top: "calc(env(safe-area-inset-top) + 12px)", transform: "translateX(-50%)", animation: "paisaPop 0.25s ease" }}
+    >
+      <span style={{ fontSize: 14 }}>✨</span>
+      <span style={{ fontFamily: "Inter", fontWeight: 700, color: "#14162B", fontSize: 13 }}>{text}</span>
+    </div>
+  );
+}
+
+function Card({ children, className = "" }) {
+  return (
+    <div className={`rounded-2xl p-4 ${className}`} style={{ background: "#1E2142", border: "1px solid #2A2E56" }}>
+      {children}
+    </div>
+  );
+}
+
+function SectionTitle({ children, right }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <h2 style={{ fontFamily: "Poppins", color: "#F5F3EE", fontWeight: 700, fontSize: 16 }}>{children}</h2>
+      {right}
+    </div>
+  );
+}
+
+const DEFAULT_PROFILE = { name: "Aarav", pocketMoney: 2000, balance: 2000, xp: 40, level: 1, streak: 3, saved: 0 };
+const DEFAULT_GOALS = [
+  { id: "g1", name: "PS5", cost: 55000, saved: 33000, emoji: "🎮" },
+  { id: "g2", name: "Basketball Shoes", cost: 8000, saved: 6400, emoji: "👟" },
+];
+const DEFAULT_PORTFOLIO = { cash: 100000, holdings: {} };
+
+function PaisaQuest() {
+  const [tab, setTab] = useState("home");
+  const [parentMode, setParentMode] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const [profile, setProfile] = useState(() => loadKey("pq_profile", DEFAULT_PROFILE));
+  const [transactions, setTransactions] = useState(() => loadKey("pq_transactions", []));
+  const [challenges, setChallenges] = useState(() => loadKey("pq_challenges", DEFAULT_CHALLENGES));
+  const [goals, setGoals] = useState(() => loadKey("pq_goals", DEFAULT_GOALS));
+  const [portfolio, setPortfolio] = useState(() => loadKey("pq_portfolio", DEFAULT_PORTFOLIO));
+  const [prices, setPrices] = useState(() => Object.fromEntries(INSTRUMENTS.map((i) => [i.symbol, i.price])));
+  const [lessonIndex, setLessonIndex] = useState(0);
+  const [lessonDone, setLessonDone] = useState(false);
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [quizAnswered, setQuizAnswered] = useState(null);
+  const [coachQ, setCoachQ] = useState("");
+  const [coachA, setCoachA] = useState(null);
+  const [sendAmount, setSendAmount] = useState("");
+  const priceHistoryRef = useRef(Object.fromEntries(INSTRUMENTS.map((i) => [i.symbol, [i.price]])));
+
+  useEffect(() => { saveKey("pq_profile", profile); }, [profile]);
+  useEffect(() => { saveKey("pq_transactions", transactions); }, [transactions]);
+  useEffect(() => { saveKey("pq_challenges", challenges); }, [challenges]);
+  useEffect(() => { saveKey("pq_goals", goals); }, [goals]);
+  useEffect(() => { saveKey("pq_portfolio", portfolio); }, [portfolio]);
+
+  function gainXP(amount, label) {
+    setProfile((p) => {
+      const totalXP = p.xp + amount;
+      const level = 1 + Math.floor(totalXP / 100);
+      return { ...p, xp: totalXP, level };
+    });
+    setToast(label || `+${amount} XP`);
+  }
+
+  function addExpense(cat, amount) {
+    if (!amount || amount <= 0) return;
+    setTransactions((t) => [{ id: Date.now(), cat: cat.id, label: cat.label, amount, date: new Date().toISOString() }, ...t]);
+    setProfile((p) => ({ ...p, balance: Math.max(0, p.balance - amount) }));
+  }
+
+  function avoidPurchase() {
+    setProfile((p) => ({ ...p, saved: p.saved + 50 }));
+    setChallenges((cs) => cs.map((c) => (c.id === "c7" ? { ...c, progress: Math.min(c.saveTarget, c.progress + 50) } : c)));
+    gainXP(10, "+10 XP — avoided a purchase!");
+  }
+
+  function claimChallenge(id) {
+    setChallenges((cs) => cs.map((c) => (c.id === id ? { ...c, claimed: true } : c)));
+    gainXP(50, "Reward claimed! +50 XP");
+  }
+
+  function buyInstrument(sym, qty) {
+    const price = prices[sym];
+    const cost = price * qty;
+    if (cost > portfolio.cash || qty <= 0) return;
+    setPortfolio((pf) => {
+      const holding = pf.holdings[sym] || { qty: 0, avgPrice: 0 };
+      const newQty = holding.qty + qty;
+      const newAvg = (holding.qty * holding.avgPrice + cost) / newQty;
+      return { cash: pf.cash - cost, holdings: { ...pf.holdings, [sym]: { qty: newQty, avgPrice: newAvg } } };
+    });
+    gainXP(5, "+5 XP — invested wisely");
+  }
+
+  function sellInstrument(sym, qty) {
+    const holding = portfolio.holdings[sym];
+    if (!holding || qty <= 0 || qty > holding.qty) return;
+    const proceeds = prices[sym] * qty;
+    setPortfolio((pf) => {
+      const remaining = holding.qty - qty;
+      const holdings = { ...pf.holdings };
+      if (remaining <= 0) delete holdings[sym];
+      else holdings[sym] = { ...holding, qty: remaining };
+      return { cash: pf.cash + proceeds, holdings };
+    });
+  }
+
+  function simulateMarket() {
+    setPrices((prev) => {
+      const next = { ...prev };
+      INSTRUMENTS.forEach((i) => {
+        const change = (Math.random() * 2 - 1) * i.vol;
+        next[i.symbol] = Math.max(1, prev[i.symbol] * (1 + change));
+        priceHistoryRef.current[i.symbol] = [...priceHistoryRef.current[i.symbol].slice(-19), next[i.symbol]];
+      });
+      return next;
+    });
+  }
+
+  function contributeToGoal(id, amount) {
+    if (amount <= 0 || amount > profile.balance) return;
+    setGoals((gs) => gs.map((g) => (g.id === id ? { ...g, saved: Math.min(g.cost, g.saved + amount) } : g)));
+    setProfile((p) => ({ ...p, balance: p.balance - amount }));
+    gainXP(8, "+8 XP — goal funded");
+  }
+
+  function completeLesson() {
+    setLessonDone(true);
+    gainXP(15, "+15 XP — lesson complete");
+  }
+
+  function answerQuiz(idx) {
+    if (quizAnswered !== null) return;
+    setQuizAnswered(idx);
+    if (idx === QUIZ[quizIndex].a) gainXP(20, "+20 XP — correct!");
+  }
+
+  function askCoach() {
+    const q = coachQ.trim();
+    if (!q) return;
+    const priceMatch = q.match(/(\d+[\d,]*)/);
+    const amountMentioned = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ""), 10) : null;
+    let answer;
+    if (amountMentioned) {
+      const spendable = profile.balance;
+      if (amountMentioned <= spendable * 0.3) {
+        answer = `Yes — ${CURRENCY(amountMentioned)} is under 30% of your current balance (${CURRENCY(spendable)}). Should be comfortable if it's not a recurring cost.`;
+      } else if (amountMentioned <= spendable) {
+        answer = `You can afford ${CURRENCY(amountMentioned)}, but it's a big chunk of your ${CURRENCY(spendable)} balance. Maybe save toward it over a couple of weeks instead of buying it all at once.`;
+      } else {
+        answer = `Not right now — that's ${CURRENCY(amountMentioned - spendable)} more than your current balance of ${CURRENCY(spendable)}. Try adding it as a Goal and saving toward it.`;
+      }
+    } else {
+      answer = "Tell me the price of the thing you're asking about (e.g. 'Can I afford AirPods for ₹12000?') and I'll check it against your balance.";
+    }
+    setCoachA(answer);
+  }
+
+  function sendPocketMoney() {
+    const amt = parseInt(sendAmount, 10);
+    if (!amt || amt <= 0) return;
+    setProfile((p) => ({ ...p, balance: p.balance + amt }));
+    setSendAmount("");
+    setToast(`Sent ${CURRENCY(amt)} to ${profile.name}`);
+  }
+
+  const spendByCat = CATEGORIES.map((c) => ({
+    name: c.label,
+    value: transactions.filter((t) => t.cat === c.id).reduce((s, t) => s + t.amount, 0),
+    color: c.color,
+  })).filter((c) => c.value > 0);
+
+  const portfolioValue = portfolio.cash + Object.entries(portfolio.holdings).reduce((sum, [sym, h]) => sum + h.qty * prices[sym], 0);
+  const portfolioReturn = ((portfolioValue - 100000) / 100000) * 100;
+
+  const navItems = [
+    { id: "home", emoji: "🏠", label: "Home" },
+    { id: "track", emoji: "👛", label: "Track" },
+    { id: "invest", emoji: "📈", label: "Invest" },
+    { id: "goals", emoji: "🎯", label: "Goals" },
+    { id: "learn", emoji: "📘", label: "Learn" },
+  ];
+
+  return (
+    <div id="app-shell" style={{ fontFamily: "Inter, sans-serif" }}>
+      {toast && <Toast text={toast} onDone={() => setToast(null)} />}
+
+      <div className="flex items-center justify-between px-4 pt-3 pb-3" style={{ paddingTop: "calc(env(safe-area-inset-top) + 10px)" }}>
+        <div className="flex items-center gap-2.5">
+          <XPRing xp={profile.xp} level={profile.level} />
+          <div>
+            <div style={{ fontFamily: "Poppins", color: "#F5F3EE", fontWeight: 700, fontSize: 14 }}>{profile.name}</div>
+            <div className="flex items-center gap-1" style={{ color: "#8B8FBF", fontSize: 11 }}>
+              <span>🔥</span> {profile.streak}-day streak
+            </div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div style={{ fontFamily: "Poppins", color: "#2EC4B6", fontWeight: 700, fontSize: 16 }}>{CURRENCY(profile.balance)}</div>
+          <button onClick={() => setParentMode((m) => !m)} className="flex items-center gap-1 mt-0.5" style={{ color: "#8B8FBF", fontSize: 10 }}>
+            <span>👪</span> {parentMode ? "Exit parent view" : "Parent view"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto pq-scroll px-4 pb-4">
+        {parentMode ? (
+          <ParentView profile={profile} goals={goals} challenges={challenges} sendAmount={sendAmount} setSendAmount={setSendAmount} sendPocketMoney={sendPocketMoney} />
+        ) : (
+          <>
+            {tab === "home" && (
+              <HomeTab profile={profile} spendByCat={spendByCat} challenges={challenges} avoidPurchase={avoidPurchase} claimChallenge={claimChallenge} goToInvest={() => setTab("invest")} />
+            )}
+            {tab === "track" && <TrackTab addExpense={addExpense} transactions={transactions} />}
+            {tab === "invest" && (
+              <InvestTab
+                portfolio={portfolio} prices={prices} priceHistory={priceHistoryRef.current}
+                buyInstrument={buyInstrument} sellInstrument={sellInstrument} simulateMarket={simulateMarket}
+                portfolioValue={portfolioValue} portfolioReturn={portfolioReturn}
+              />
+            )}
+            {tab === "goals" && <GoalsTab goals={goals} balance={profile.balance} contributeToGoal={contributeToGoal} />}
+            {tab === "learn" && (
+              <LearnTab
+                lessonIndex={lessonIndex} setLessonIndex={setLessonIndex} lessonDone={lessonDone} setLessonDone={setLessonDone} completeLesson={completeLesson}
+                quizIndex={quizIndex} setQuizIndex={setQuizIndex} quizAnswered={quizAnswered} setQuizAnswered={setQuizAnswered} answerQuiz={answerQuiz}
+                coachQ={coachQ} setCoachQ={setCoachQ} coachA={coachA} askCoach={askCoach}
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {!parentMode && (
+        <div className="flex items-center justify-around py-2.5 px-2" style={{ background: "#0F1128", borderTop: "1px solid #2A2E56", paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
+          {navItems.map((item) => {
+            const active = tab === item.id;
+            return (
+              <button key={item.id} onClick={() => setTab(item.id)} className="flex flex-col items-center gap-1 px-2">
+                <span style={{ fontSize: 18, opacity: active ? 1 : 0.55 }}>{item.emoji}</span>
+                <span style={{ fontSize: 10, color: active ? "#F2B705" : "#8B8FBF", fontWeight: active ? 700 : 500 }}>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Home ---------------- */
+function HomeTab({ profile, spendByCat, challenges, avoidPurchase, claimChallenge, goToInvest }) {
+  return (
+    <div className="space-y-4 pt-1">
+      <Card>
+        <SectionTitle right={<span style={{ color: "#8B8FBF", fontSize: 11 }}>Level {profile.level}</span>}>Your XP</SectionTitle>
+        <div className="w-full h-2.5 rounded-full" style={{ background: "#2A2E56" }}>
+          <div className="h-2.5 rounded-full" style={{ width: `${profile.xp % 100}%`, background: "#F2B705", transition: "width .4s" }} />
+        </div>
+        <div className="flex items-center justify-between mt-3">
+          <span style={{ color: "#8B8FBF", fontSize: 12 }}>
+            Saved so far: <b style={{ color: "#2EC4B6" }}>{CURRENCY(profile.saved)}</b>
+          </span>
+          <button onClick={avoidPurchase} className="px-3 py-1.5 rounded-full flex items-center gap-1" style={{ background: "#2EC4B6", color: "#0B2C29", fontWeight: 700, fontSize: 12 }}>
+            <span>✓</span> Skipped a buy
+          </button>
+        </div>
+      </Card>
+
+      {spendByCat.length > 0 && (
+        <Card>
+          <SectionTitle>Where it went</SectionTitle>
+          <div className="flex items-center gap-4">
+            <Donut data={spendByCat} />
+            <div className="flex-1 space-y-1.5">
+              {spendByCat.map((c) => (
+                <div key={c.name} className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full" style={{ background: c.color, display: "inline-block" }} />
+                    <span style={{ color: "#F5F3EE", fontSize: 11 }}>{c.name}</span>
+                  </div>
+                  <span style={{ color: "#8B8FBF", fontSize: 11 }}>{CURRENCY(c.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <SectionTitle>Challenges</SectionTitle>
+        <div className="space-y-3">
+          {challenges.map((c) => {
+            const target = c.saveTarget || 1;
+            const pct = Math.min(100, (c.progress / target) * 100);
+            return (
+              <div key={c.id}>
+                <div className="flex items-center justify-between mb-1">
+                  <span style={{ color: "#F5F3EE", fontSize: 12, fontWeight: 600 }}>{c.title}</span>
+                  <span style={{ color: "#8B8FBF", fontSize: 10 }}>{c.desc}</span>
+                </div>
+                <div className="w-full h-2 rounded-full" style={{ background: "#2A2E56" }}>
+                  <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: "#F2B705" }} />
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span style={{ color: "#8B8FBF", fontSize: 10 }}>🏆 {c.reward}</span>
+                  {pct >= 100 && !c.claimed ? (
+                    <button onClick={() => claimChallenge(c.id)} className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#F2B705", color: "#14162B" }}>Claim</button>
+                  ) : c.claimed ? (
+                    <span className="text-[10px]" style={{ color: "#2EC4B6" }}>Claimed ✓</span>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <button onClick={goToInvest} className="w-full rounded-2xl p-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg,#2EC4B6,#1a8f85)" }}>
+        <div className="text-left">
+          <div style={{ fontFamily: "Poppins", fontWeight: 700, color: "#0B2C29", fontSize: 13 }}>Try the Investment Simulator</div>
+          <div style={{ color: "#0B2C29", fontSize: 11, opacity: 0.85 }}>₹1,00,000 virtual cash · zero real risk</div>
+        </div>
+        <span style={{ color: "#0B2C29", fontSize: 20 }}>›</span>
+      </button>
+    </div>
+  );
+}
+
+/* ---------------- Track ---------------- */
+function TrackTab({ addExpense, transactions }) {
+  const [amount, setAmount] = useState("");
+  const [selected, setSelected] = useState(null);
+
+  return (
+    <div className="space-y-4 pt-1">
+      <Card>
+        <SectionTitle>Log a spend</SectionTitle>
+        <div className="grid grid-cols-3 gap-2.5 mb-3">
+          {CATEGORIES.map((c) => {
+            const active = selected?.id === c.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelected(c)}
+                className="flex flex-col items-center gap-1 py-3 rounded-xl"
+                style={{ background: active ? c.color : "#262A50", border: active ? `1px solid ${c.color}` : "1px solid transparent" }}
+              >
+                <span style={{ fontSize: 18 }}>{c.emoji}</span>
+                <span style={{ fontSize: 10, color: active ? "#14162B" : "#F5F3EE", fontWeight: 600 }}>{c.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Amount (₹)"
+            inputMode="numeric"
+            className="flex-1 rounded-xl px-3 py-2 outline-none"
+            style={{ background: "#262A50", color: "#F5F3EE", fontSize: 13 }}
+          />
+          <button
+            onClick={() => {
+              if (selected && amount) {
+                addExpense(selected, parseInt(amount, 10));
+                setAmount("");
+                setSelected(null);
+              }
+            }}
+            className="px-4 rounded-xl font-bold"
+            style={{ background: selected && amount ? "#F2B705" : "#2A2E56", color: "#14162B", fontSize: 13 }}
+          >
+            Add
+          </button>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle>Recent</SectionTitle>
+        {transactions.length === 0 && <p style={{ color: "#8B8FBF", fontSize: 12 }}>No spends logged yet — tap a category above.</p>}
+        <div className="space-y-2">
+          {transactions.slice(0, 8).map((t) => {
+            const cat = CATEGORIES.find((c) => c.id === t.cat);
+            return (
+              <div key={t.id} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 14 }}>{cat?.emoji}</span>
+                  <span style={{ color: "#F5F3EE", fontSize: 12 }}>{t.label}</span>
+                </div>
+                <span style={{ color: "#FF6B6B", fontSize: 12, fontWeight: 600 }}>-{CURRENCY(t.amount)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------- Invest ---------------- */
+function InvestTab({ portfolio, prices, priceHistory, buyInstrument, sellInstrument, simulateMarket, portfolioValue, portfolioReturn }) {
+  const [qtyBySym, setQtyBySym] = useState({});
+  return (
+    <div className="space-y-4 pt-1">
+      <Card>
+        <SectionTitle right={<button onClick={simulateMarket} className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "#F2B705", color: "#14162B" }}>Next day ▶</button>}>
+          Portfolio
+        </SectionTitle>
+        <div style={{ fontFamily: "Poppins", color: "#F5F3EE", fontWeight: 700, fontSize: 22 }}>{CURRENCY(portfolioValue)}</div>
+        <div style={{ color: portfolioReturn >= 0 ? "#2EC4B6" : "#FF6B6B", fontSize: 12, fontWeight: 600 }}>
+          {portfolioReturn >= 0 ? "▲" : "▼"} {Math.abs(portfolioReturn).toFixed(2)}% all-time · Cash {CURRENCY(portfolio.cash)}
+        </div>
+      </Card>
+
+      {INSTRUMENTS.map((inst) => {
+        const holding = portfolio.holdings[inst.symbol];
+        const price = prices[inst.symbol];
+        const qty = qtyBySym[inst.symbol] || 1;
+        const history = priceHistory[inst.symbol] || [];
+        return (
+          <Card key={inst.symbol}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div style={{ color: "#F5F3EE", fontSize: 13, fontWeight: 700 }}>{inst.name}</div>
+                <div style={{ color: "#8B8FBF", fontSize: 10 }}>{inst.type} · {inst.symbol}</div>
+              </div>
+              <div className="text-right">
+                <div style={{ color: "#F5F3EE", fontSize: 14, fontWeight: 700 }}>{CURRENCY(price)}</div>
+                {holding && <div style={{ color: "#2EC4B6", fontSize: 10 }}>{holding.qty} units held</div>}
+              </div>
+            </div>
+            <div className="my-1">
+              <Sparkline values={history} />
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <button onClick={() => setQtyBySym((q) => ({ ...q, [inst.symbol]: Math.max(1, qty - 1) }))} className="w-7 h-7 rounded-lg font-bold" style={{ background: "#262A50", color: "#F5F3EE" }}>−</button>
+              <span style={{ color: "#F5F3EE", fontSize: 12, width: 20, textAlign: "center" }}>{qty}</span>
+              <button onClick={() => setQtyBySym((q) => ({ ...q, [inst.symbol]: qty + 1 }))} className="w-7 h-7 rounded-lg font-bold" style={{ background: "#262A50", color: "#F5F3EE" }}>+</button>
+              <button onClick={() => buyInstrument(inst.symbol, qty)} className="flex-1 py-1.5 rounded-lg font-bold" style={{ background: "#2EC4B6", color: "#0B2C29", fontSize: 12 }}>Buy</button>
+              {holding && <button onClick={() => sellInstrument(inst.symbol, qty)} className="flex-1 py-1.5 rounded-lg font-bold" style={{ background: "#FF6B6B", color: "#3A0E0E", fontSize: 12 }}>Sell</button>}
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- Goals ---------------- */
+function GoalsTab({ goals, balance, contributeToGoal }) {
+  const [amounts, setAmounts] = useState({});
+  return (
+    <div className="space-y-4 pt-1">
+      {goals.map((g) => {
+        const pct = Math.min(100, (g.saved / g.cost) * 100);
+        return (
+          <Card key={g.id}>
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontSize: 14, color: "#F5F3EE" }}>
+                {g.emoji} <b>{g.name}</b>
+              </span>
+              <span style={{ color: "#8B8FBF", fontSize: 11 }}>{CURRENCY(g.saved)} / {CURRENCY(g.cost)}</span>
+            </div>
+            <div className="w-full h-2.5 rounded-full" style={{ background: "#2A2E56" }}>
+              <div className="h-2.5 rounded-full" style={{ width: `${pct}%`, background: "#2EC4B6" }} />
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span style={{ color: "#8B8FBF", fontSize: 10 }}>{pct.toFixed(0)}% there</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={amounts[g.id] || ""}
+                  onChange={(e) => setAmounts((a) => ({ ...a, [g.id]: e.target.value.replace(/[^0-9]/g, "") }))}
+                  placeholder="₹"
+                  inputMode="numeric"
+                  className="w-16 rounded-lg px-2 py-1 outline-none"
+                  style={{ background: "#262A50", color: "#F5F3EE", fontSize: 11 }}
+                />
+                <button
+                  onClick={() => {
+                    const v = parseInt(amounts[g.id] || "0", 10);
+                    if (v > 0) {
+                      contributeToGoal(g.id, v);
+                      setAmounts((a) => ({ ...a, [g.id]: "" }));
+                    }
+                  }}
+                  className="px-2 py-1 rounded-lg font-bold"
+                  style={{ background: "#F2B705", color: "#14162B", fontSize: 11 }}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+      <p style={{ color: "#8B8FBF", fontSize: 11, textAlign: "center" }}>Balance available to allocate: {CURRENCY(balance)}</p>
+    </div>
+  );
+}
+
+/* ---------------- Learn (lessons + quiz + coach) ---------------- */
+function LearnTab({ lessonIndex, setLessonIndex, lessonDone, setLessonDone, completeLesson, quizIndex, setQuizIndex, quizAnswered, setQuizAnswered, answerQuiz, coachQ, setCoachQ, coachA, askCoach }) {
+  const lesson = LESSONS[lessonIndex];
+  const quiz = QUIZ[quizIndex];
+  return (
+    <div className="space-y-4 pt-1">
+      <Card>
+        <SectionTitle right={<span style={{ color: "#8B8FBF", fontSize: 10 }}>60-sec lesson</span>}>{lesson.title}</SectionTitle>
+        <p style={{ color: "#F5F3EE", fontSize: 12, lineHeight: 1.5 }}>{lesson.body}</p>
+        <div className="flex items-center justify-between mt-3">
+          <button onClick={() => { setLessonIndex((i) => (i + 1) % LESSONS.length); setLessonDone(false); }} style={{ color: "#8B8FBF", fontSize: 11 }}>
+            Next topic →
+          </button>
+          {!lessonDone ? (
+            <button onClick={completeLesson} className="px-3 py-1 rounded-full font-bold" style={{ background: "#F2B705", color: "#14162B", fontSize: 11 }}>Mark done</button>
+          ) : (
+            <span style={{ color: "#2EC4B6", fontSize: 11 }}>Done ✓</span>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle right={<span>🏆</span>}>Quiz mode</SectionTitle>
+        <p style={{ color: "#F5F3EE", fontSize: 12, marginBottom: 10 }}>{quiz.q}</p>
+        <div className="space-y-2">
+          {quiz.options.map((opt, i) => {
+            const isCorrect = i === quiz.a;
+            const isChosen = quizAnswered === i;
+            let bg = "#262A50";
+            if (quizAnswered !== null) {
+              if (isCorrect) bg = "#2EC4B6";
+              else if (isChosen) bg = "#FF6B6B";
+            }
+            return (
+              <button key={i} onClick={() => answerQuiz(i)} className="w-full text-left px-3 py-2 rounded-xl" style={{ background: bg }}>
+                <span style={{ color: quizAnswered !== null && (isCorrect || isChosen) ? "#14162B" : "#F5F3EE", fontSize: 12, fontWeight: 600 }}>{opt}</span>
+              </button>
+            );
+          })}
+        </div>
+        {quizAnswered !== null && (
+          <button onClick={() => { setQuizIndex((i) => (i + 1) % QUIZ.length); setQuizAnswered(null); }} className="mt-3 text-[11px] font-bold" style={{ color: "#F2B705" }}>
+            Next question →
+          </button>
+        )}
+      </Card>
+
+      <Card>
+        <SectionTitle>AI Finance Coach</SectionTitle>
+        <div className="flex gap-2 mb-2">
+          <input
+            value={coachQ}
+            onChange={(e) => setCoachQ(e.target.value)}
+            placeholder="Can I afford AirPods for ₹12000?"
+            className="flex-1 rounded-xl px-3 py-2 outline-none"
+            style={{ background: "#262A50", color: "#F5F3EE", fontSize: 12 }}
+            onKeyDown={(e) => e.key === "Enter" && askCoach()}
+          />
+          <button onClick={askCoach} className="px-3 rounded-xl font-bold" style={{ background: "#F2B705", color: "#14162B", fontSize: 12 }}>Ask</button>
+        </div>
+        {coachA && <p style={{ color: "#F5F3EE", fontSize: 12, lineHeight: 1.5 }}>{coachA}</p>}
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------- Parent Dashboard ---------------- */
+function ParentView({ profile, goals, challenges, sendAmount, setSendAmount, sendPocketMoney }) {
+  return (
+    <div className="space-y-4 pt-1">
+      <Card>
+        <SectionTitle right={<span>🛡️</span>}>{profile.name}'s progress</SectionTitle>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div style={{ color: "#8B8FBF", fontSize: 10 }}>Balance</div>
+            <div style={{ color: "#F5F3EE", fontSize: 16, fontWeight: 700 }}>{CURRENCY(profile.balance)}</div>
+          </div>
+          <div>
+            <div style={{ color: "#8B8FBF", fontSize: 10 }}>Total saved</div>
+            <div style={{ color: "#2EC4B6", fontSize: 16, fontWeight: 700 }}>{CURRENCY(profile.saved)}</div>
+          </div>
+          <div>
+            <div style={{ color: "#8B8FBF", fontSize: 10 }}>Level</div>
+            <div style={{ color: "#F2B705", fontSize: 16, fontWeight: 700 }}>{profile.level}</div>
+          </div>
+          <div>
+            <div style={{ color: "#8B8FBF", fontSize: 10 }}>Streak</div>
+            <div style={{ color: "#F5F3EE", fontSize: 16, fontWeight: 700 }}>{profile.streak} days</div>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle>Send pocket money</SectionTitle>
+        <div className="flex gap-2">
+          <input
+            value={sendAmount}
+            onChange={(e) => setSendAmount(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Amount (₹)"
+            inputMode="numeric"
+            className="flex-1 rounded-xl px-3 py-2 outline-none"
+            style={{ background: "#262A50", color: "#F5F3EE", fontSize: 12 }}
+          />
+          <button onClick={sendPocketMoney} className="px-3 rounded-xl font-bold flex items-center gap-1" style={{ background: "#2EC4B6", color: "#0B2C29", fontSize: 12 }}>
+            <span>📤</span> Send
+          </button>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle>Savings goals</SectionTitle>
+        <div className="space-y-2">
+          {goals.map((g) => (
+            <div key={g.id} className="flex items-center justify-between">
+              <span style={{ color: "#F5F3EE", fontSize: 12 }}>{g.emoji} {g.name}</span>
+              <span style={{ color: "#8B8FBF", fontSize: 11 }}>{Math.round((g.saved / g.cost) * 100)}%</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle>Active challenges</SectionTitle>
+        <div className="space-y-1.5">
+          {challenges.map((c) => (
+            <div key={c.id} className="flex items-center justify-between">
+              <span style={{ color: "#F5F3EE", fontSize: 12 }}>{c.title}</span>
+              <span style={{ color: c.claimed ? "#2EC4B6" : "#8B8FBF", fontSize: 11 }}>{c.claimed ? "Claimed" : "In progress"}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+globalThis.PaisaQuest = PaisaQuest;
+
+if (typeof document !== "undefined") {
+  const rootEl = document.getElementById("root");
+  if (rootEl && ReactDOM.createRoot) {
+    ReactDOM.createRoot(rootEl).render(<PaisaQuest />);
+  }
+}
+
+</script>
+</body>
+</html>
